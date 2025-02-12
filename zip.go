@@ -10,14 +10,23 @@ import (
 	"log"
 	"path"
 	"strings"
+	"unicode/utf8"
 
 	szip "github.com/STARRY-S/zip"
+	"github.com/saintfish/chardet"
 	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/encoding/korean"
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/encoding/traditionalchinese"
+	"golang.org/x/text/encoding/unicode"
 
 	"github.com/dsnet/compress/bzip2"
 	"github.com/klauspost/compress/zip"
 	"github.com/klauspost/compress/zstd"
 	"github.com/ulikunitz/xz"
+	yake "github.com/yeka/zip"
 )
 
 func init() {
@@ -183,7 +192,12 @@ func (z Zip) archiveOneFile(ctx context.Context, zw *zip.Writer, idx int, file F
 // the interface because we figure you can Read() from anything you can ReadAt() or Seek()
 // with. Due to the nature of the zip archive format, if sourceArchive is not an io.Seeker
 // and io.ReaderAt, an error is returned.
-func (z Zip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler) error {
+func (z Zip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler, opts ...Option) error {
+	opt := &Options{}
+	for _, o := range opts {
+		o(opt)
+	}
+
 	sra, ok := sourceArchive.(seekReaderAt)
 	if !ok {
 		return fmt.Errorf("input type must be an io.ReaderAt and io.Seeker because of zip format constraints")
@@ -194,7 +208,8 @@ func (z Zip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile Fi
 		return fmt.Errorf("determining stream size: %w", err)
 	}
 
-	zr, err := zip.NewReader(sra, size)
+	zr, err := yake.NewReader(sra, size)
+	// zr, err := zip.NewReader(sra, size)
 	if err != nil {
 		return err
 	}
@@ -205,6 +220,10 @@ func (z Zip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile Fi
 	for i, f := range zr.File {
 		if err := ctx.Err(); err != nil {
 			return err // honor context cancellation
+		}
+
+		if f.IsEncrypted() {
+			f.SetPassword(opt.password)
 		}
 
 		// ensure filename and comment are UTF-8 encoded (issue #147 and PR #305)
@@ -248,17 +267,39 @@ func (z Zip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile Fi
 // decodeText decodes the name and comment fields from hdr into UTF-8.
 // It is a no-op if the text is already UTF-8 encoded or if z.TextEncoding
 // is not specified.
-func (z Zip) decodeText(hdr *zip.FileHeader) {
-	if hdr.NonUTF8 && z.TextEncoding != nil {
-		dec := z.TextEncoding.NewDecoder()
-		filename, err := dec.String(hdr.Name)
-		if err == nil {
-			hdr.Name = filename
-		}
-		if hdr.Comment != "" {
-			comment, err := dec.String(hdr.Comment)
+func (z Zip) decodeText(hdr *yake.FileHeader) {
+	nonUTF8 := false
+
+	// Determine the character encoding.
+	utf8Valid1, utf8Require1 := detectUTF8(hdr.Name)
+	utf8Valid2, utf8Require2 := detectUTF8(hdr.Comment)
+	switch {
+	case !utf8Valid1 || !utf8Valid2:
+		// Name and Comment definitely not UTF-8.
+		nonUTF8 = true
+	case !utf8Require1 && !utf8Require2:
+		// Name and Comment use only single-byte runes that overlap with UTF-8.
+		nonUTF8 = false
+	default:
+		// Might be UTF-8, might be some other encoding; preserve existing flag.
+		// Some ZIP writers use UTF-8 encoding without setting the UTF-8 flag.
+		// Since it is impossible to always distinguish valid UTF-8 from some
+		// other encoding (e.g., GBK or Shift-JIS), we trust the flag.
+		nonUTF8 = hdr.Flags&0x800 == 0
+	}
+
+	if nonUTF8 {
+		if len(hdr.Name) > 0 {
+			name, err := convertUTF8([]byte(hdr.Name))
 			if err == nil {
-				hdr.Comment = comment
+				hdr.Name = string(name)
+			}
+		}
+
+		if len(hdr.Comment) > 0 {
+			comment, err := convertUTF8([]byte(hdr.Comment))
+			if err == nil {
+				hdr.Comment = string(comment)
 			}
 		}
 	}
@@ -390,3 +431,71 @@ var (
 	_ ArchiverAsync = Zip{}
 	_ Extractor     = Zip{}
 )
+
+func detectUTF8(s string) (valid, require bool) {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		// Officially, ZIP uses CP-437, but many readers use the system's
+		// local character encoding. Most encoding are compatible with a large
+		// subset of CP-437, which itself is ASCII-like.
+		//
+		// Forbid 0x7e and 0x5c since EUC-KR and Shift-JIS replace those
+		// characters with localized currency and overline characters.
+		if r < 0x20 || r > 0x7d || r == 0x5c {
+			if !utf8.ValidRune(r) || (r == utf8.RuneError && size == 1) {
+				return false, false
+			}
+			require = true
+		}
+	}
+	return true, require
+}
+
+func convertUTF8(input []byte) ([]byte, error) {
+	result, err := chardet.NewTextDetector().DetectBest(input)
+	if err != nil {
+		return nil, err
+	}
+
+	switch result.Charset {
+	case "UTF-16BE":
+		return unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM).NewDecoder().Bytes(input)
+	case "UTF-16LE":
+		return unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewDecoder().Bytes(input)
+	case "GB-18030":
+		return simplifiedchinese.GB18030.NewDecoder().Bytes(input)
+	case "ISO-8859-1":
+		return charmap.ISO8859_1.NewDecoder().Bytes(input)
+	case "ISO-8859-2":
+		return charmap.ISO8859_2.NewDecoder().Bytes(input)
+	case "ISO-8859-5":
+		return charmap.ISO8859_5.NewDecoder().Bytes(input)
+	case "ISO-8859-6":
+		return charmap.ISO8859_6.NewDecoder().Bytes(input)
+	case "ISO-8859-7":
+		return charmap.ISO8859_7.NewDecoder().Bytes(input)
+	case "ISO-8859-8-I":
+		return charmap.ISO8859_8I.NewDecoder().Bytes(input)
+	case "ISO-8859-8":
+		return charmap.ISO8859_8.NewDecoder().Bytes(input)
+	case "windows-1251":
+		return charmap.Windows1251.NewDecoder().Bytes(input)
+	case "windows-1256":
+		return charmap.Windows1256.NewDecoder().Bytes(input)
+	case "KOI8-R":
+		return charmap.KOI8R.NewDecoder().Bytes(input)
+	case "ISO-8859-9":
+		return charmap.ISO8859_9.NewDecoder().Bytes(input)
+	case "Shift_JIS":
+		return japanese.ShiftJIS.NewDecoder().Bytes(input)
+	case "EUC-JP":
+		return japanese.EUCJP.NewDecoder().Bytes(input)
+	case "EUC-KR":
+		return korean.EUCKR.NewDecoder().Bytes(input)
+	case "Big5":
+		return traditionalchinese.Big5.NewDecoder().Bytes(input)
+	default:
+		return input, nil
+	}
+}

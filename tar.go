@@ -185,7 +185,7 @@ func (t Tar) Insert(ctx context.Context, into io.ReadWriteSeeker, files []FileIn
 	return nil
 }
 
-func (t Tar) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler) error {
+func (t Tar) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler, opts ...Option) error {
 	tr := tar.NewReader(sourceArchive)
 
 	// important to initialize to non-nil, empty value due to how fileIsIncluded works

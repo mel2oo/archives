@@ -25,9 +25,6 @@ type SevenZip struct {
 	// a file within an archive will be logged and the
 	// operation will continue on remaining files.
 	ContinueOnError bool
-
-	// The password, if dealing with an encrypted archive.
-	Password string
 }
 
 func (SevenZip) Extension() string { return ".7z" }
@@ -59,7 +56,12 @@ func (z SevenZip) Match(_ context.Context, filename string, stream io.Reader) (M
 // the interface because we figure you can Read() from anything you can ReadAt() or Seek()
 // with. Due to the nature of the zip archive format, if sourceArchive is not an io.Seeker
 // and io.ReaderAt, an error is returned.
-func (z SevenZip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler) error {
+func (z SevenZip) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler, opts ...Option) error {
+	opt := &Options{}
+	for _, o := range opts {
+		o(opt)
+	}
+
 	sra, ok := sourceArchive.(seekReaderAt)
 	if !ok {
 		return fmt.Errorf("input type must be an io.ReaderAt and io.Seeker because of zip format constraints")
@@ -70,7 +72,7 @@ func (z SevenZip) Extract(ctx context.Context, sourceArchive io.Reader, handleFi
 		return fmt.Errorf("determining stream size: %w", err)
 	}
 
-	zr, err := sevenzip.NewReaderWithPassword(sra, size, z.Password)
+	zr, err := sevenzip.NewReaderWithPassword(sra, size, opt.password)
 	if err != nil {
 		return err
 	}

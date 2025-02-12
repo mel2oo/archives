@@ -280,7 +280,7 @@ func (ca CompressedArchive) ArchiveAsync(ctx context.Context, output io.Writer, 
 }
 
 // Extract reads files out of a compressed archive while decompressing the results.
-func (ca CompressedArchive) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler) error {
+func (ca CompressedArchive) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler, opts ...Option) error {
 	if ca.Extraction == nil {
 		return fmt.Errorf("no extraction format")
 	}

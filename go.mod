@@ -18,8 +18,10 @@ require (
 	github.com/STARRY-S/zip v0.2.1
 	github.com/bodgit/sevenzip v1.6.0
 	github.com/pierrec/lz4/v4 v4.1.21
+	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d
 	github.com/sorairolake/lzip-go v0.3.5
-	golang.org/x/text v0.20.0
+	github.com/yeka/zip v0.0.0-20231116150916-03d6312748a9
+	golang.org/x/text v0.22.0
 )
 
 require (
@@ -29,4 +31,5 @@ require (
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
+	golang.org/x/crypto v0.33.0 // indirect
 )

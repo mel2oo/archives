@@ -103,7 +103,7 @@ type Extractor interface {
 	// or after the walk has proceeded to the next file.
 	//
 	// Context cancellation must be honored.
-	Extract(ctx context.Context, archive io.Reader, handleFile FileHandler) error
+	Extract(ctx context.Context, archive io.Reader, handleFile FileHandler, opts ...Option) error
 }
 
 // Inserter can insert files into an existing archive.
@@ -113,4 +113,14 @@ type Inserter interface {
 	//
 	// Context cancellation must be honored.
 	Insert(ctx context.Context, archive io.ReadWriteSeeker, files []FileInfo) error
+}
+
+type Option func(*Options)
+
+type Options struct {
+	password string
+}
+
+func WithPassword(pwd string) Option {
+	return func(o *Options) { o.password = pwd }
 }

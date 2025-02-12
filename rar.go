@@ -25,9 +25,6 @@ type Rar struct {
 	// a file within an archive will be logged and the
 	// operation will continue on remaining files.
 	ContinueOnError bool
-
-	// Password to open archives.
-	Password string
 }
 
 func (Rar) Extension() string { return ".rar" }
@@ -59,10 +56,15 @@ func (r Rar) Match(_ context.Context, filename string, stream io.Reader) (MatchR
 
 // Archive is not implemented for RAR because it is patent-encumbered.
 
-func (r Rar) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler) error {
+func (r Rar) Extract(ctx context.Context, sourceArchive io.Reader, handleFile FileHandler, opts ...Option) error {
+	opt := &Options{}
+	for _, o := range opts {
+		o(opt)
+	}
+
 	var options []rardecode.Option
-	if r.Password != "" {
-		options = append(options, rardecode.Password(r.Password))
+	if opt.password != "" {
+		options = append(options, rardecode.Password(opt.password))
 	}
 
 	rr, err := rardecode.NewReader(sourceArchive, options...)
